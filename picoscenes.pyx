@@ -304,16 +304,24 @@ cdef class Picoscenes:
     cdef public list raw
     cdef bint if_report
 
-    def __cinit__(self, file, if_report=True, *argv, **kw):
+    def __cinit__(self, file="", if_report=True, *argv, **kw):
         self.file = file
         self.if_report = if_report
         self.raw = list()
-        self.read()
 
-    def __init__(self, file, if_report=True):
-        pass
+    def __init__(self, file="", if_report=True):
+        """Initialize PicoScenes parser
+        Args:
+            file (str): .csi file path for offline mode, empty for real-time UDP
+            if_report (bool): enable/disable auto-printing
+        """
+        if self.file:  # Only read file if path was provided
+            self.read()
 
     cpdef read(self):
+        """Read from configured .csi file"""
+        if not self.file:
+            raise ValueError("No .csi file specified for offline reading")
         self.seek(self.file, 0, 0)
 
     cpdef seek(self, file, long pos, long num):
@@ -661,84 +669,3 @@ cdef parse(optional[ModularPicoScenesRxFrame] *frame):
 
     # print(data)
     return data
-
-
-
-
-
-
-
-
-
-
-
-
-
-##########################
-# 1) Cython Declarations #
-##########################
-
-# Instead of including the original "UDPForwardingHeader.hxx" (packed struct),
-# we include the plain struct from our new wrapper.
-
-cdef extern from "UDPForwardingHeaderWrapper.cpp":
-    cdef struct MySimpleUDPForwardingHeader:
-        uint32_t magicNumber
-        uint16_t version
-        uint16_t diagramTaskId
-        uint16_t diagramId
-        uint16_t numDiagrams
-        uint32_t currentDiagramLength
-        uint32_t totalDiagramLength
-        bint has_value
-
-    MySimpleUDPForwardingHeader parseUDPForwardingHeader(const uint8_t* buffer)
-
-
-# If you need the PicoScenesFrame, still import from your existing rxs_parsing_core
-cdef extern from "ModularPicoScenesFrame.hxx" namespace "..." :
-    # declarations for ModularPicoScenesRxFrame, etc.
-    pass
-
-
-##################################################
-# 2) The process_udp_packet Function
-##################################################
-cpdef dict process_udp_packet(bytes udp_data):
-    """
-    Process a UDP packet containing a forwarding header + partial frame data.
-    We'll parse the forwarding header via our new wrapper,
-    then store or reassemble the data in Python.
-    """
-    cdef const uint8_t* buf = <const uint8_t*> udp_data
-
-    # Call the wrapper to parse the header
-    cdef MySimpleUDPForwardingHeader hdr = parseUDPForwardingHeader(buf)
-
-    if not hdr.has_value:
-        raise ValueError("Failed to parse forwarding header from UDP")
-
-    # Check magic number
-    if hdr.magicNumber != 0x20150315:
-        raise ValueError("Invalid magic number in forwarding header")
-
-    # The 'payload' after the first 20 bytes
-    cdef size_t header_size = 20  # because we know the struct is 20 bytes
-    cdef bytes payload = udp_data[header_size:]
-
-    # Use the info from 'hdr' to do multi-segment logic
-    cdef int task_id = hdr.diagramTaskId
-    cdef int diagram_id = hdr.diagramId
-    cdef int num_diagrams = hdr.numDiagrams
-    cdef int total_len = hdr.totalDiagramLength
-
-    # 1) Add to reassembly buffer
-    if task_id not in udpSegments:
-        # store partial data in a dict: { diag_id: payload, ... }
-        # plus total_len, how many we expect, etc.
-        udpSegments[task_id] = {
-            "segments": {},
-            "expected": num_diagrams,
-            "total_len": total_len,
-            "received": 0
-        }

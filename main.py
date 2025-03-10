@@ -4,26 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.io import savemat
 
-# i = 0  # stands for the first frame of csi frames
-
-# frames = Picoscenes("rx_by_usrpN210.csi")
-# numTones = frames.raw[i].get("CSI").get("numTones")
-# SubcarrierIndex = np.array(frames.raw[i].get("CSI").get("SubcarrierIndex"))
-# Mag = np.array(frames.raw[i].get("CSI").get("Mag"))[:numTones]
-
-# plt.title("Magnitude Demo")
-# plt.xlabel("x axis subcarryindex ")
-# plt.ylabel("y axis Magnitude")
-# plt.plot(SubcarrierIndex, Mag)
-# plt.show()
-
 def process_udp_stream(port=50000):
     # Initialize PicoScenes with empty file path
-    scanner = Picoscenes("rx_by_usrpN210.csi")
+    scanner = Picoscenes()
     
     data = []
     # Start UDP listener
     try:
+        print("Starting UDP listener on port", port)
         for frame in scanner.listen_udp(port):
             if frame and "BasebandSignals" in frame:
                 # csi_data = frame["CSI"]
@@ -34,8 +22,9 @@ def process_udp_stream(port=50000):
 
                     # Save the collected baseband signals to a .mat file
     except KeyboardInterrupt:
-        savemat('baseband_signals.mat', {'baseband_data': data})
-        print("\nSaved baseband signals to baseband_signals.mat")
+        if len(data) > 0:
+            savemat('baseband_signals.mat', {'baseband_data': data})
+            print("\nSaved baseband signals to baseband_signals.mat")
         print("\nStopped UDP listener")
         return data
 
