@@ -10,13 +10,11 @@ from setuptools import find_packages, setup
 from setuptools.command.build_ext import build_ext
 from setuptools.extension import Extension
 
-
 def find_files(root: Path, ext: str) -> List[str]:
     """
     Search for files of given extension recursively within root
     """
     return [str(file) for file in Path(root).glob("*" + ext)]
-
 
 class Build(build_ext):
     def build_extensions(self):
@@ -30,18 +28,29 @@ class Build(build_ext):
                     e.extra_compile_args = ["/std:c++latest"]
         super(Build, self).build_extensions()
 
-
+# Path to your "rxs_parsing_core" folder
 pico_root = Path.cwd() / "rxs_parsing_core"
 pico_generated = pico_root / "preprocess" / "generated"
 pico_include = pico_root / "preprocess"
+
+# Collect all C++ source files (*.cxx, *.cpp) under rxs_parsing_core and generated
 pico_source = find_files(pico_root, ".cxx") + find_files(pico_generated, ".cpp")
+
+# (Optional) if you have a wrapper .cpp, append it here:
+# pico_source.append("UDPForwardingHeaderWrapper.cpp")
+
+# Build the extension
 pico_extension = Extension(
     "picoscenes",
     ["./picoscenes.pyx"] + pico_source,
-    include_dirs=[numpy.get_include(), str(pico_include)],
+    include_dirs=[
+        numpy.get_include(),   # for NumPy
+        str(pico_include),     # e.g. rxs_parsing_core/preprocess
+        str(pico_root),        # <<-- Add this so #include "MVMExtraSegment.hxx" works
+        ".",                   # current directory if needed
+    ],
     define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
 )
-
 
 if not pico_root.is_dir():
     raise RuntimeError(
@@ -50,7 +59,6 @@ if not pico_root.is_dir():
     )
 
 EXTENSIONS = [pico_extension]
-
 
 setup(
     name="picoscenes",

@@ -1,5 +1,7 @@
 # distutils: language = c++
 import struct
+import socket
+from collections import defaultdict
 
 from libc.stdio cimport (fopen, fread, fclose, fseek, ftell, printf, FILE,
 SEEK_END, SEEK_SET, SEEK_CUR)
@@ -12,8 +14,16 @@ from libcpp.vector cimport vector
 from libcpp.complex cimport complex as ccomplex
 from cython.operator cimport dereference as deref
 
-import numpy as np
 
+from libcpp.map cimport map
+from libcpp.pair cimport pair
+
+
+import numpy as np
+import sys
+cdef dict udpSegments = {}
+
+from cpython.bytes cimport PyBytes_AsString
 
 cdef extern from "<optional>" namespace "std" nogil:
     cdef cppclass optional[T]:
@@ -315,7 +325,7 @@ cdef class Picoscenes:
         f = fopen(datafile, "rb")
         if f is NULL:
             printf("Open failed!\n")
-            exit(-1)
+            sys.exit(-1)
 
         fseek(f, 0, SEEK_END)
         cdef long lens = ftell(f)
@@ -367,6 +377,60 @@ cdef class Picoscenes:
             print(frame.value().toString())
         self.count = 1
         return 0xf300  # status code
+
+    def listen_udp(self, int port):
+        """Listen for UDP packets and process them in real-time"""
+        cdef bytes data
+        cdef dict reassembly_buffer = {}
+        
+        cdef const uint8_t* buf
+        cdef optional[ModularPicoScenesRxFrame] frame
+        
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", port))
+        
+        while True:
+            data, addr = sock.recvfrom(65535)
+            if len(data) < 20:
+                continue
+                
+            # Parse UDP forwarding header directly without helper function
+            (magic, version, task_id, 
+             diagram_id, num_diagrams, 
+             current_len, total_len) = struct.unpack("<IHHHHII", data[:20])
+            
+            if magic != 0x20150315:
+                continue
+                
+            payload = data[20:]
+            
+            # Modified reassembly logic
+            if task_id not in reassembly_buffer:
+                reassembly_buffer[task_id] = {
+                    "segments": {},
+                    "total": num_diagrams
+                }
+            
+            # Store segment
+            reassembly_buffer[task_id]["segments"][diagram_id] = payload
+            
+            # Check completion
+            if len(reassembly_buffer[task_id]["segments"]) == reassembly_buffer[task_id]["total"]:
+                # Reassemble and process
+                full_frame = b"".join(
+                    [reassembly_buffer[task_id]["segments"][i] 
+                     for i in sorted(reassembly_buffer[task_id]["segments"])]
+                )
+                
+                # Convert Python bytes to C buffer
+                buf = <const uint8_t*>PyBytes_AsString(full_frame)
+                frame = ModularPicoScenesRxFrame.fromBuffer(buf, len(full_frame), True)
+                
+                parsed = parse(&frame)
+                if parsed:
+                    yield parsed
+                
+                del reassembly_buffer[task_id]
 
 cdef inline uint32_t cu32l(uint8_t a, uint8_t b, uint8_t c, uint8_t d):
     return a | (b << 8) | (c << 16) | (d << 24)
@@ -597,3 +661,84 @@ cdef parse(optional[ModularPicoScenesRxFrame] *frame):
 
     # print(data)
     return data
+
+
+
+
+
+
+
+
+
+
+
+
+
+##########################
+# 1) Cython Declarations #
+##########################
+
+# Instead of including the original "UDPForwardingHeader.hxx" (packed struct),
+# we include the plain struct from our new wrapper.
+
+cdef extern from "UDPForwardingHeaderWrapper.cpp":
+    cdef struct MySimpleUDPForwardingHeader:
+        uint32_t magicNumber
+        uint16_t version
+        uint16_t diagramTaskId
+        uint16_t diagramId
+        uint16_t numDiagrams
+        uint32_t currentDiagramLength
+        uint32_t totalDiagramLength
+        bint has_value
+
+    MySimpleUDPForwardingHeader parseUDPForwardingHeader(const uint8_t* buffer)
+
+
+# If you need the PicoScenesFrame, still import from your existing rxs_parsing_core
+cdef extern from "ModularPicoScenesFrame.hxx" namespace "..." :
+    # declarations for ModularPicoScenesRxFrame, etc.
+    pass
+
+
+##################################################
+# 2) The process_udp_packet Function
+##################################################
+cpdef dict process_udp_packet(bytes udp_data):
+    """
+    Process a UDP packet containing a forwarding header + partial frame data.
+    We'll parse the forwarding header via our new wrapper,
+    then store or reassemble the data in Python.
+    """
+    cdef const uint8_t* buf = <const uint8_t*> udp_data
+
+    # Call the wrapper to parse the header
+    cdef MySimpleUDPForwardingHeader hdr = parseUDPForwardingHeader(buf)
+
+    if not hdr.has_value:
+        raise ValueError("Failed to parse forwarding header from UDP")
+
+    # Check magic number
+    if hdr.magicNumber != 0x20150315:
+        raise ValueError("Invalid magic number in forwarding header")
+
+    # The 'payload' after the first 20 bytes
+    cdef size_t header_size = 20  # because we know the struct is 20 bytes
+    cdef bytes payload = udp_data[header_size:]
+
+    # Use the info from 'hdr' to do multi-segment logic
+    cdef int task_id = hdr.diagramTaskId
+    cdef int diagram_id = hdr.diagramId
+    cdef int num_diagrams = hdr.numDiagrams
+    cdef int total_len = hdr.totalDiagramLength
+
+    # 1) Add to reassembly buffer
+    if task_id not in udpSegments:
+        # store partial data in a dict: { diag_id: payload, ... }
+        # plus total_len, how many we expect, etc.
+        udpSegments[task_id] = {
+            "segments": {},
+            "expected": num_diagrams,
+            "total_len": total_len,
+            "received": 0
+        }
