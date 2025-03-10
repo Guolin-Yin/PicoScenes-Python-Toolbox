@@ -107,6 +107,11 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 pip3 install -r requirements.txt
 ```
 
+* Install `gxx` with the specified version.
+
+```bash
+conda install -c conda-forge gxx==11.4.0
+```
 3. Build the program.
 
 ```bash
