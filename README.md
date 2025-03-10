@@ -118,9 +118,6 @@ python3 setup.py build_ext --inplace
 * **[PicoScenes](https://ps.zpj.io/)**: A powerful Wi-Fi sensing platform middleware for a wide range of hardware.
   * This project was released by [Zhiping Jiang](https://zpj.io/bio/).
 
-## License
-
-This project is licensed under the MIT License.
 
 ## Acknowledgments
 
