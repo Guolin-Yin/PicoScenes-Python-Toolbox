@@ -84,7 +84,7 @@ if __name__ == "__main__":
 1. Clone this repository with the `--recursive` option.
 
 ```bash
-git clone https://github.com/Herrtian/PicoscenesToolbox.git --recursive
+git clone https://github.com/Guolin-Yin/PicoScenes-Python-Toolbox --recursive
 ```
 
 2. Install Python and dependencies.
